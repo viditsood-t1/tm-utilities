@@ -13,7 +13,7 @@ A lightweight Python logging utility that provides:
 
 ✅ Automatic log directory creation
 
-✅ Monthly log organization (`Jun_2026/08-06-2026.log`)
+✅ Monthly log organization
 
 ✅ Daily log rotation by filename
 
@@ -93,37 +93,6 @@ A new monthly folder is created automatically, and each day receives its own log
 
 ---
 
-## Using Log Separators
-
-For long-running scripts and ETL jobs, separators make logs easier to read.
-
-```python
-from tm_logger import log_separator
-
-log_separator("DATA EXTRACTION")
-```
-
-Output:
-
-```text
-**************************************************
-                 DATA EXTRACTION
-**************************************************
-```
-
-You can customize the separator:
-
-```python
-log_separator(
-    section_name="API CALLS",
-    char="-",
-    line_length=60,
-    spacer_lines=1
-)
-```
-
----
-
 ## Default Configuration
 
 The package ships with the following defaults:
@@ -149,54 +118,6 @@ UTC +05:30
 ```
 
 This is useful for applications deployed primarily in India without requiring additional timezone configuration.
-
----
-
-## Example
-
-```python
-from tm_logger import logger, log_separator
-
-log_separator("APPLICATION START")
-
-logger.info("Loading configuration")
-logger.info("Connecting to database")
-logger.info("Application started successfully")
-```
-
----
-
-## Generated Log Example
-
-```text
-2026-06-08 14:35:12,451 - INFO - logger - log_separator -
-**************************************************
-
-2026-06-08 14:35:12,452 - INFO - logger - log_separator -
-                 APPLICATION START
-
-2026-06-08 14:35:12,453 - INFO - logger - log_separator -
-**************************************************
-
-2026-06-08 14:35:13,001 - INFO - app - main -
-Loading configuration
-```
-
----
-
-## Package Structure
-
-```text
-tm-utilities
-├── pyproject.toml
-├── README.md
-├── src
-│   └── tm_logger
-│       ├── __init__.py
-│       └── logger.py
-└── tests
-    └── test_logger.py
-```
 
 ---
 
