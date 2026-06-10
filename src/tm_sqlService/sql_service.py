@@ -1,4 +1,5 @@
 import os
+import json
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
@@ -11,6 +12,10 @@ except ImportError as exc:
 
 DEFAULT_DB_ENV = "ODBC_CONNECTION_STRING"
 DEFAULT_AUTOCOMMIT = False
+DEFAULT_RULEBOOK_TABLE = "rulebook"
+DEFAULT_RULEBOOK_ID = "default"
+RULEBOOK_ID_COLUMN = "id"
+RULEBOOK_CONTENT_COLUMN = "rulebook"
 
 Params = Union[Sequence[Any], Dict[str, Any]]
 
@@ -317,6 +322,152 @@ class SQLService:
             return columns
         finally:
             cursor.close()
+
+    def _ensure_rulebook_table(self, table_name: str = DEFAULT_RULEBOOK_TABLE) -> None:
+        """Create the rulebook table when it does not already exist."""
+        if self.table_exists(table_name):
+            return
+
+        cursor = self.execute(
+            f"""
+            CREATE TABLE {table_name} (
+                {RULEBOOK_ID_COLUMN} VARCHAR(255) PRIMARY KEY,
+                {RULEBOOK_CONTENT_COLUMN} TEXT
+            )
+            """
+        )
+        cursor.close()
+        if not self.connection.autocommit:
+            self.connection.commit()
+
+    def _normalize_rulebook_row(
+        self,
+        rulebook: Union[str, Dict[str, Any]],
+        rulebook_id: Any = DEFAULT_RULEBOOK_ID,
+        require_row_id: bool = False,
+    ) -> Dict[str, Any]:
+        """Convert rulebook input into a SQL row."""
+        if isinstance(rulebook, str):
+            row_id = rulebook_id
+            rulebook_text = rulebook
+        elif isinstance(rulebook, dict):
+            row = dict(rulebook)
+            row_id = rulebook_id
+            for id_key in (RULEBOOK_ID_COLUMN, "_id", "rulebook_id"):
+                if id_key in row:
+                    row_id = row.pop(id_key)
+                    break
+
+            if require_row_id and row_id == DEFAULT_RULEBOOK_ID:
+                raise ValueError(
+                    "Each rulebook must include id, _id, or rulebook_id when saving multiple rulebooks."
+                )
+
+            if RULEBOOK_CONTENT_COLUMN in row:
+                rulebook_text = row[RULEBOOK_CONTENT_COLUMN]
+            elif "data" in row:
+                rulebook_text = row["data"]
+            else:
+                rulebook_text = json.dumps(row)
+        else:
+            raise TypeError("rulebook must be a string or dictionary.")
+
+        return {
+            RULEBOOK_ID_COLUMN: row_id,
+            RULEBOOK_CONTENT_COLUMN: rulebook_text,
+        }
+
+    def _upsert_rulebook_row(
+        self,
+        rulebook: Union[str, Dict[str, Any]],
+        rulebook_id: Any = DEFAULT_RULEBOOK_ID,
+        table_name: str = DEFAULT_RULEBOOK_TABLE,
+        require_row_id: bool = False,
+    ) -> int:
+        """Save one rulebook row without creating duplicate id errors."""
+        self._ensure_rulebook_table(table_name)
+        row = self._normalize_rulebook_row(rulebook, rulebook_id, require_row_id)
+
+        cursor = self.execute(
+            f"""
+            UPDATE {table_name}
+            SET {RULEBOOK_CONTENT_COLUMN} = ?
+            WHERE {RULEBOOK_ID_COLUMN} = ?
+            """,
+            (row[RULEBOOK_CONTENT_COLUMN], row[RULEBOOK_ID_COLUMN]),
+        )
+        updated_count = cursor.rowcount
+        cursor.close()
+
+        if updated_count == 0:
+            cursor = self.execute(
+                f"""
+                INSERT INTO {table_name} ({RULEBOOK_ID_COLUMN}, {RULEBOOK_CONTENT_COLUMN})
+                VALUES (?, ?)
+                """,
+                (row[RULEBOOK_ID_COLUMN], row[RULEBOOK_CONTENT_COLUMN]),
+            )
+            updated_count = cursor.rowcount
+            cursor.close()
+
+        if not self.connection.autocommit:
+            self.connection.commit()
+
+        return updated_count
+
+    def insert_rulebook(
+        self,
+        rulebook: Union[str, Dict[str, Any], List[Union[str, Dict[str, Any]]]],
+        rulebook_id: Any = DEFAULT_RULEBOOK_ID,
+        table_name: str = DEFAULT_RULEBOOK_TABLE,
+    ) -> Any:
+        """Save rulebook data into the rulebook table by default."""
+        if isinstance(rulebook, list):
+            return [
+                self._upsert_rulebook_row(
+                    item,
+                    rulebook_id=rulebook_id,
+                    table_name=table_name,
+                    require_row_id=len(rulebook) > 1,
+                )
+                for item in rulebook
+            ]
+
+        return self._upsert_rulebook_row(
+            rulebook,
+            rulebook_id=rulebook_id,
+            table_name=table_name,
+        )
+
+    def get_rulebook(
+        self,
+        rulebook_id: Any = DEFAULT_RULEBOOK_ID,
+        table_name: str = DEFAULT_RULEBOOK_TABLE,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve rulebook rows from the rulebook table by id."""
+        self._ensure_rulebook_table(table_name)
+        return self.fetchall(
+            f"""
+            SELECT {RULEBOOK_ID_COLUMN}, {RULEBOOK_CONTENT_COLUMN}
+            FROM {table_name}
+            WHERE {RULEBOOK_ID_COLUMN} = ?
+            """,
+            (rulebook_id,),
+        )
+
+    def rulebook_prompt(
+        self,
+        rulebook_id: Any = DEFAULT_RULEBOOK_ID,
+        table_name: str = DEFAULT_RULEBOOK_TABLE,
+    ) -> str:
+        """Generate a prompt string based on a rulebook row."""
+        rows = self.get_rulebook(rulebook_id=rulebook_id, table_name=table_name)
+        prompt_lines = ["Incorporate the following rules into your reasoning:"]
+
+        for row in rows:
+            prompt_lines.append(str(row.get(RULEBOOK_CONTENT_COLUMN, "")))
+
+        return "\n".join(prompt_lines)
 
     def __enter__(self) -> "SQLService":
         self.connect()
