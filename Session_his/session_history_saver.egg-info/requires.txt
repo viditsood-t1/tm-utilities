@@ -1,0 +1,11 @@
+
+[dev]
+pytest>=7
+pytest-cov
+pymongo>=4.0
+
+[mongo]
+pymongo>=4.0
+
+[mongo-atlas]
+pymongo[srv]>=4.0

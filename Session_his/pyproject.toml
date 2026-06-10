@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "session-history-saver"
+version = "1.0.0"
+description = "Track and persist user interaction history across sessions — for AI chatbots, query tools, and any workflow requiring session continuity."
+readme = "README.md"
+requires-python = ">=3.8"
+
+license = { text = "MIT" }
+
+authors = [
+    { name = "Session History Saver" }
+]
+
+keywords = [
+    "session",
+    "history",
+    "tracking",
+    "llm",
+    "chatbot",
+    "persistence",
+    "audit"
+]
+
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Database"
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+mongo = [
+    "pymongo>=4.0"
+]
+
+mongo-atlas = [
+    "pymongo[srv]>=4.0"
+]
+
+dev = [
+    "pytest>=7",
+    "pytest-cov",
+    "pymongo>=4.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/session-history-saver"
+Documentation = "https://github.com/your-org/session-history-saver#readme"
+Issues = "https://github.com/your-org/session-history-saver/issues"
+
+[tool.setuptools.packages.find]
+include = ["session_history_saver*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
