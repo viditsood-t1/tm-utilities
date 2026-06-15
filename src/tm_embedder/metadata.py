@@ -122,12 +122,12 @@ def parse_document(
 
     metadata_case = metadata_case.lower()
 
-    if metadata_case == "metadata":
+    if metadata_case == "with_meta":
         return parse_case1(parsed_document)
 
-    if metadata_case == "case2":
+    if metadata_case == "without_meta":
         return parse_case2(parsed_document)
 
     raise ValueError(
-        "metadata_case must be case1 or case2"
+        "metadata_case must be with_meta or without_meta"
     )
