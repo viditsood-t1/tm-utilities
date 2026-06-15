@@ -14,7 +14,7 @@ def ist_time(*args):
     return datetime.now(ist).timetuple()
 
 
-def log_separator(section_name=None, char="*", line_length=50, spacer_lines=2):
+def logger_title(section_name=None, char="*", line_length=50, spacer_lines=0):
     blank_line = " "
     separator_line = char * line_length
 
