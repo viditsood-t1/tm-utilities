@@ -1,6 +1,6 @@
 import chromadb
 
-from .embeddings import BGEEmbeddingFunction
+from tm_embedder.embeddings import BGEEmbeddingFunction
 
 
 class ChromaStore:

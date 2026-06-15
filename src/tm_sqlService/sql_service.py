@@ -1,6 +1,8 @@
 import os
 import json
+import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 try:
@@ -14,6 +16,7 @@ DEFAULT_DB_ENV = "ODBC_CONNECTION_STRING"
 DEFAULT_AUTOCOMMIT = False
 DEFAULT_RULEBOOK_TABLE = "rulebook"
 DEFAULT_RULEBOOK_ID = "default"
+DEFAULT_HISTORY_TABLE = "user_history"
 RULEBOOK_ID_COLUMN = "id"
 RULEBOOK_CONTENT_COLUMN = "rulebook"
 
@@ -322,6 +325,292 @@ class SQLService:
             return columns
         finally:
             cursor.close()
+
+    @staticmethod
+    def _require_user_id(user_id: str) -> None:
+        if not user_id:
+            raise ValueError("user_id is required.")
+
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _validate_table_name(table_name: str) -> str:
+        if not table_name:
+            raise ValueError("table_name is required.")
+
+        parts = table_name.split(".")
+        if not all(part.replace("_", "").isalnum() for part in parts):
+            raise ValueError("table_name can only contain letters, numbers, underscores, and dots.")
+        return table_name
+
+    @staticmethod
+    def _normalize_history_messages(
+        messages: Union[str, Dict[str, Any], List[Union[str, Dict[str, Any]]]],
+    ) -> List[Dict[str, Any]]:
+        if isinstance(messages, (str, dict)):
+            messages = [messages]
+
+        normalized = []
+        for message in messages:
+            if isinstance(message, str):
+                message = {"role": "user", "content": message}
+            elif isinstance(message, dict):
+                message = dict(message)
+            else:
+                raise TypeError("messages must contain strings or dictionaries.")
+
+            message.setdefault("role", "user")
+            message.setdefault("content", "")
+            message.setdefault("timestamp", SQLService._utc_now())
+            message.setdefault("metadata", {})
+            normalized.append(message)
+
+        return normalized
+
+    @staticmethod
+    def _decode_history_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        decoded = dict(row)
+        decoded["messages"] = json.loads(decoded.get("messages") or "[]")
+        decoded["tags"] = json.loads(decoded.get("tags") or "[]")
+        decoded["metadata"] = json.loads(decoded.get("metadata") or "{}")
+        return decoded
+
+    def _ensure_history_table(self, table_name: str = DEFAULT_HISTORY_TABLE) -> None:
+        """Create the default user history table when it does not exist."""
+        table_name = self._validate_table_name(table_name)
+        if self.table_exists(table_name):
+            return
+
+        cursor = self.execute(
+            f"""
+            CREATE TABLE {table_name} (
+                session_id VARCHAR(255) PRIMARY KEY,
+                user_id VARCHAR(255) NOT NULL,
+                title VARCHAR(255),
+                messages TEXT,
+                tags TEXT,
+                metadata TEXT,
+                created_at VARCHAR(64) NOT NULL,
+                updated_at VARCHAR(64) NOT NULL
+            )
+            """
+        )
+        cursor.close()
+        if not self.connection.autocommit:
+            self.connection.commit()
+
+    def save_user_history(
+        self,
+        user_id: str,
+        messages: Union[str, Dict[str, Any], List[Union[str, Dict[str, Any]]]],
+        session_id: Optional[str] = None,
+        title: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        table_name: str = DEFAULT_HISTORY_TABLE,
+    ) -> Dict[str, Any]:
+        """Create or replace one user history session."""
+        self._require_user_id(user_id)
+        table_name = self._validate_table_name(table_name)
+        self._ensure_history_table(table_name)
+
+        session_id = session_id or str(uuid.uuid4())
+        now = self._utc_now()
+        existing = self.fetchone(
+            f"SELECT created_at FROM {table_name} WHERE session_id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+        created_at = existing["created_at"] if existing else now
+
+        row = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "title": title,
+            "messages": json.dumps(self._normalize_history_messages(messages), default=str),
+            "tags": json.dumps(tags or []),
+            "metadata": json.dumps(metadata or {}),
+            "created_at": created_at,
+            "updated_at": now,
+        }
+
+        cursor = self.execute(
+            f"""
+            UPDATE {table_name}
+            SET title = ?, messages = ?, tags = ?, metadata = ?, updated_at = ?
+            WHERE session_id = ? AND user_id = ?
+            """,
+            (
+                row["title"],
+                row["messages"],
+                row["tags"],
+                row["metadata"],
+                row["updated_at"],
+                session_id,
+                user_id,
+            ),
+        )
+        updated_count = cursor.rowcount
+        cursor.close()
+
+        if updated_count == 0:
+            cursor = self.execute(
+                f"""
+                INSERT INTO {table_name}
+                    (session_id, user_id, title, messages, tags, metadata, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["session_id"],
+                    row["user_id"],
+                    row["title"],
+                    row["messages"],
+                    row["tags"],
+                    row["metadata"],
+                    row["created_at"],
+                    row["updated_at"],
+                ),
+            )
+            cursor.close()
+
+        if not self.connection.autocommit:
+            self.connection.commit()
+
+        return self._decode_history_row(row)
+
+    def append_user_history(
+        self,
+        user_id: str,
+        session_id: str,
+        messages: Union[str, Dict[str, Any], List[Union[str, Dict[str, Any]]]],
+        table_name: str = DEFAULT_HISTORY_TABLE,
+    ) -> bool:
+        """Append messages to an existing user history session."""
+        self._require_user_id(user_id)
+        if not session_id:
+            raise ValueError("session_id is required.")
+
+        table_name = self._validate_table_name(table_name)
+        self._ensure_history_table(table_name)
+        session = self.get_user_history_session(user_id, session_id, table_name)
+        if session is None:
+            return False
+
+        session["messages"].extend(self._normalize_history_messages(messages))
+        cursor = self.execute(
+            f"""
+            UPDATE {table_name}
+            SET messages = ?, updated_at = ?
+            WHERE session_id = ? AND user_id = ?
+            """,
+            (
+                json.dumps(session["messages"], default=str),
+                self._utc_now(),
+                session_id,
+                user_id,
+            ),
+        )
+        updated = cursor.rowcount > 0
+        cursor.close()
+        if not self.connection.autocommit:
+            self.connection.commit()
+        return updated
+
+    def get_user_history_session(
+        self,
+        user_id: str,
+        session_id: str,
+        table_name: str = DEFAULT_HISTORY_TABLE,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch one history session for a user."""
+        self._require_user_id(user_id)
+        table_name = self._validate_table_name(table_name)
+        self._ensure_history_table(table_name)
+
+        row = self.fetchone(
+            f"""
+            SELECT session_id, user_id, title, messages, tags, metadata, created_at, updated_at
+            FROM {table_name}
+            WHERE session_id = ? AND user_id = ?
+            """,
+            (session_id, user_id),
+        )
+        return self._decode_history_row(row) if row else None
+
+    def fetch_user_history(
+        self,
+        user_id: str,
+        table_name: str = DEFAULT_HISTORY_TABLE,
+        limit: int = 20,
+        offset: int = 0,
+        tags: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch history sessions for a user, newest first."""
+        self._require_user_id(user_id)
+        table_name = self._validate_table_name(table_name)
+        self._ensure_history_table(table_name)
+
+        rows = self.fetchall(
+            f"""
+            SELECT session_id, user_id, title, messages, tags, metadata, created_at, updated_at
+            FROM {table_name}
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id,),
+        )
+        decoded = [self._decode_history_row(row) for row in rows]
+        if tags:
+            decoded = [
+                row for row in decoded
+                if any(tag in row.get("tags", []) for tag in tags)
+            ]
+        return decoded[offset: offset + limit]
+
+    def search_user_history(
+        self,
+        user_id: str,
+        query: str,
+        table_name: str = DEFAULT_HISTORY_TABLE,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Search a user's message history."""
+        self._require_user_id(user_id)
+        table_name = self._validate_table_name(table_name)
+        self._ensure_history_table(table_name)
+
+        rows = self.fetchall(
+            f"""
+            SELECT session_id, user_id, title, messages, tags, metadata, created_at, updated_at
+            FROM {table_name}
+            WHERE user_id = ? AND messages LIKE ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id, f"%{query}%"),
+        )
+        return [self._decode_history_row(row) for row in rows[:limit]]
+
+    def delete_user_history(
+        self,
+        user_id: str,
+        session_id: str,
+        table_name: str = DEFAULT_HISTORY_TABLE,
+    ) -> bool:
+        """Delete one history session for a user."""
+        self._require_user_id(user_id)
+        table_name = self._validate_table_name(table_name)
+        self._ensure_history_table(table_name)
+
+        cursor = self.execute(
+            f"DELETE FROM {table_name} WHERE session_id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+        deleted = cursor.rowcount > 0
+        cursor.close()
+        if not self.connection.autocommit:
+            self.connection.commit()
+        return deleted
 
     def _ensure_rulebook_table(self, table_name: str = DEFAULT_RULEBOOK_TABLE) -> None:
         """Create the rulebook table when it does not already exist."""

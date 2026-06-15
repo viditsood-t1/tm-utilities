@@ -1,4 +1,6 @@
 import os
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pymongo import MongoClient
@@ -11,6 +13,7 @@ DEFAULT_URI_ENV = "MONGODB_URI"
 DEFAULT_DB_ENV = "MONGODB_DB"
 DEFAULT_RULEBOOK_COLLECTION = "rulebook"
 DEFAULT_RULEBOOK_ID = "default"
+DEFAULT_HISTORY_COLLECTION = "user_history"
 
 
 class MongoService:
@@ -186,7 +189,202 @@ class MongoService:
         if isinstance(collection, Collection):
             return collection
         return self.collection(collection)
-    
+
+    @staticmethod
+    def _resolve_history_collection(
+        collection: Union[str, Collection],
+        table_name: Optional[Union[str, Collection]] = None,
+    ) -> Union[str, Collection]:
+        return table_name if table_name is not None else collection
+
+    def _require_user_id(self, user_id: str) -> None:
+        if not user_id:
+            raise ValueError("user_id is required.")
+
+    @staticmethod
+    def _utc_now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _normalize_history_messages(
+        messages: Union[str, Dict[str, Any], List[Union[str, Dict[str, Any]]]],
+    ) -> List[Dict[str, Any]]:
+        if isinstance(messages, (str, dict)):
+            messages = [messages]
+
+        normalized = []
+        for message in messages:
+            if isinstance(message, str):
+                message = {"role": "user", "content": message}
+            elif isinstance(message, dict):
+                message = dict(message)
+            else:
+                raise TypeError("messages must contain strings or dictionaries.")
+
+            message.setdefault("role", "user")
+            message.setdefault("content", "")
+            message.setdefault("timestamp", MongoService._utc_now())
+            message.setdefault("metadata", {})
+            normalized.append(message)
+
+        return normalized
+
+    def _ensure_history_indexes(
+        self,
+        collection: Union[str, Collection] = DEFAULT_HISTORY_COLLECTION,
+    ) -> None:
+        history_collection = self._get_collection(collection)
+        history_collection.create_index("user_id")
+        history_collection.create_index([("user_id", 1), ("updated_at", -1)])
+        history_collection.create_index([("messages.content", "text")], sparse=True)
+
+    def save_user_history(
+        self,
+        user_id: str,
+        messages: Union[str, Dict[str, Any], List[Union[str, Dict[str, Any]]]],
+        session_id: Optional[str] = None,
+        title: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        collection: Union[str, Collection] = DEFAULT_HISTORY_COLLECTION,
+        table_name: Optional[Union[str, Collection]] = None,
+    ) -> Dict[str, Any]:
+        """Create or replace one user history session."""
+        self._require_user_id(user_id)
+        collection = self._resolve_history_collection(collection, table_name)
+        self._ensure_history_indexes(collection)
+
+        now = self._utc_now()
+        session_id = session_id or str(uuid.uuid4())
+        existing = self._get_collection(collection).find_one({"_id": session_id})
+        created_at = existing.get("created_at", now) if existing else now
+
+        document = {
+            "_id": session_id,
+            "session_id": session_id,
+            "user_id": user_id,
+            "title": title,
+            "tags": tags or [],
+            "metadata": metadata or {},
+            "messages": self._normalize_history_messages(messages),
+            "created_at": created_at,
+            "updated_at": now,
+        }
+
+        self._get_collection(collection).replace_one(
+            {"_id": session_id, "user_id": user_id},
+            document,
+            upsert=True,
+        )
+        return document
+
+    def append_user_history(
+        self,
+        user_id: str,
+        session_id: str,
+        messages: Union[str, Dict[str, Any], List[Union[str, Dict[str, Any]]]],
+        collection: Union[str, Collection] = DEFAULT_HISTORY_COLLECTION,
+        table_name: Optional[Union[str, Collection]] = None,
+    ) -> bool:
+        """Append messages to an existing user history session."""
+        self._require_user_id(user_id)
+        if not session_id:
+            raise ValueError("session_id is required.")
+
+        collection = self._resolve_history_collection(collection, table_name)
+        normalized_messages = self._normalize_history_messages(messages)
+        result = self._get_collection(collection).update_one(
+            {"_id": session_id, "user_id": user_id},
+            {
+                "$push": {"messages": {"$each": normalized_messages}},
+                "$set": {"updated_at": self._utc_now()},
+            },
+        )
+        return result.matched_count > 0
+
+    def get_user_history_session(
+        self,
+        user_id: str,
+        session_id: str,
+        collection: Union[str, Collection] = DEFAULT_HISTORY_COLLECTION,
+        table_name: Optional[Union[str, Collection]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch one history session for a user."""
+        self._require_user_id(user_id)
+        collection = self._resolve_history_collection(collection, table_name)
+        return self._get_collection(collection).find_one(
+            {"_id": session_id, "user_id": user_id}
+        )
+
+    def fetch_user_history(
+        self,
+        user_id: str,
+        collection: Union[str, Collection] = DEFAULT_HISTORY_COLLECTION,
+        limit: int = 20,
+        offset: int = 0,
+        tags: Optional[List[str]] = None,
+        table_name: Optional[Union[str, Collection]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch history sessions for a user, newest first."""
+        self._require_user_id(user_id)
+        collection = self._resolve_history_collection(collection, table_name)
+        query: Dict[str, Any] = {"user_id": user_id}
+        if tags:
+            query["tags"] = {"$in": tags}
+
+        cursor = (
+            self._get_collection(collection)
+            .find(query)
+            .sort("updated_at", -1)
+            .skip(offset)
+            .limit(limit)
+        )
+        return list(cursor)
+
+    def search_user_history(
+        self,
+        user_id: str,
+        query: str,
+        collection: Union[str, Collection] = DEFAULT_HISTORY_COLLECTION,
+        limit: int = 20,
+        table_name: Optional[Union[str, Collection]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search a user's message history."""
+        self._require_user_id(user_id)
+        collection = self._resolve_history_collection(collection, table_name)
+        self._ensure_history_indexes(collection)
+        history_collection = self._get_collection(collection)
+
+        try:
+            cursor = history_collection.find(
+                {"user_id": user_id, "$text": {"$search": query}},
+                {"score": {"$meta": "textScore"}},
+            ).sort([("score", {"$meta": "textScore"})]).limit(limit)
+            return list(cursor)
+        except PyMongoError:
+            cursor = history_collection.find(
+                {
+                    "user_id": user_id,
+                    "messages.content": {"$regex": query, "$options": "i"},
+                }
+            ).limit(limit)
+            return list(cursor)
+
+    def delete_user_history(
+        self,
+        user_id: str,
+        session_id: str,
+        collection: Union[str, Collection] = DEFAULT_HISTORY_COLLECTION,
+        table_name: Optional[Union[str, Collection]] = None,
+    ) -> bool:
+        """Delete one history session for a user."""
+        self._require_user_id(user_id)
+        collection = self._resolve_history_collection(collection, table_name)
+        result = self._get_collection(collection).delete_one(
+            {"_id": session_id, "user_id": user_id}
+        )
+        return result.deleted_count > 0
+
     def _rulebook_filter(
         self,
         filter: Optional[Dict[str, Any]] = None,
