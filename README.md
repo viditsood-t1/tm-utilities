@@ -19,7 +19,7 @@ pip install tm-utility
 Structured file + console logger with IST timezone and daily log rotation.
 
 ```python
-from tm_utility.logger import logger, logger_title, LOG_DIR, DEBUG
+from tm_utility.loggerService import logger, logger_title, LOG_DIR, DEBUG
 
 logger.info("Application started")
 logger.debug("Debug details")

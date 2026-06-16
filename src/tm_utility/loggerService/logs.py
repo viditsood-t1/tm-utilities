@@ -72,5 +72,5 @@ def setup_logger(log_dir=None, debug=None):
     return logger
 
 
-# Default logger
+# Default loggerService
 logger = setup_logger()
