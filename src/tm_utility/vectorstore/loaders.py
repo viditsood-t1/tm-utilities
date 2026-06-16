@@ -78,7 +78,7 @@ def load_document(file_path: str) -> ParsedDocument:
     """
 
     extension = Path(file_path).suffix.lower()
-
+    print("extension:::",extension)
     if extension not in SUPPORTED_EXTENSIONS:
         raise ValueError(
             f"Unsupported file type: {extension}"
