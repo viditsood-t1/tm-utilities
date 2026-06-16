@@ -1,4 +1,4 @@
-from vectorstore.tm_retriever.chroma_store import ChromaStore
+from .chroma_store import ChromaStore
 
 
 def retrieve(

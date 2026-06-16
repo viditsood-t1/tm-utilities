@@ -117,17 +117,10 @@ def parse_case2(
 
 def parse_document(
     parsed_document: ParsedDocument,
-    metadata_case: str,
+    metadata: bool = True,
 ) -> ParsedDocument:
 
-    metadata_case = metadata_case.lower()
-
-    if metadata_case == "with_meta":
+    if metadata:
         return parse_case1(parsed_document)
 
-    if metadata_case == "without_meta":
-        return parse_case2(parsed_document)
-
-    raise ValueError(
-        "metadata_case must be with_meta or without_meta"
-    )
+    return parse_case2(parsed_document)

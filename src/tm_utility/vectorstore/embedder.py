@@ -1,5 +1,5 @@
 import os
-
+from pathlib import Path
 from .loaders import load_document
 from .metadata import parse_document
 from .chunking import (
@@ -14,7 +14,7 @@ from .utils import (
     make_embedding_id,
 )
 
-
+SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
 def build_metadata(
     parsed_document,
     source_file,
@@ -52,15 +52,54 @@ def build_metadata(
 
 def ingest_document(
     file_path: str,
-    metadata_case: str,
     embedding_mode: str,
+    metadata: bool = True,
     chroma_path: str = "./chroma_db",
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
 ):
-    """
-    Main public API
-    """
+
+    # If a folder is passed, process all supported files
+    if os.path.isdir(file_path):
+
+        files = []
+
+        for root, _, filenames in os.walk(file_path):
+            for filename in filenames:
+
+                ext = Path(filename).suffix.lower()
+
+                if ext in SUPPORTED_EXTENSIONS:
+                    files.append(
+                        os.path.join(root, filename)
+                    )
+
+        if not files:
+            print(
+                f"No supported files found in {file_path}"
+            )
+            return
+
+        print(
+            f"Found {len(files)} files to process"
+        )
+
+        for file in files:
+            try:
+                ingest_document(
+                    file_path=file,
+                    metadata=metadata,
+                    embedding_mode=embedding_mode,
+                    chroma_path=chroma_path,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                )
+            except Exception as e:
+                print(
+                    f"Failed to process {file}: {e}"
+                )
+
+        return
 
     config = EmbeddingConfig(
         embedding_mode=embedding_mode,
@@ -75,7 +114,7 @@ def ingest_document(
 
     parsed_document = parse_document(
         parsed_document,
-        metadata_case,
+        metadata,
     )
 
     store = ChromaStore(

@@ -1,134 +1,241 @@
-# TM-Utilities
+# tm-utility
 
-A lightweight Python logging utility that provides:
-
-* Automatic daily log file creation
-* Monthly log folder organization
-* IST (Indian Standard Time) timestamps
-* Console and file logging simultaneously
-* Simple section separators for cleaner logs
-* Minimal configuration
-
-## Features
-
-✅ Automatic log directory creation
-
-✅ Monthly log organization
-
-✅ Daily log rotation by filename
-
-✅ IST timezone support
-
-✅ Console + file logging
-
-✅ Configurable log levels
-
-✅ Section separators for structured logging
+A Python utility library providing reusable service wrappers for MongoDB, SQL (ODBC), logging, and vector store operations.
 
 ---
 
 ## Installation
 
 ```bash
-pip install tm-utilities
+pip install tm-utility
 ```
 
 ---
 
-## Quick Start
+## Modules
+
+### `logger`
+
+Structured file + console logger with IST timezone and daily log rotation.
 
 ```python
-from tm_logger import logger
+from tm_utility.logger import logger, logger_title, LOG_DIR, DEBUG
 
 logger.info("Application started")
-logger.warning("This is a warning")
-logger.error("Something went wrong")
+logger.debug("Debug details")
+
+logger_title("My Section")  # prints a formatted section banner
 ```
 
-### Output
-
-```text
-2026-06-08 14:35:12,451 - INFO - app - main - Application started
-2026-06-08 14:35:12,452 - WARNING - app - main - This is a warning
-2026-06-08 14:35:12,453 - ERROR - app - main - Something went wrong
-```
+Logs are saved under `./logs/<Mon_YYYY>/<DD-MM-YYYY>.log` by default.
 
 ---
 
-## Custom Logger Configuration
+### `mongoService`
 
-You can create a logger with a custom log directory and log level.
+MongoDB connection wrapper built on `pymongo`.
 
 ```python
-from tm_logger import setup_logger
+from tm_utility.mongoService import MongoService
 
-logger = setup_logger(
-    log_dir="custom_logs",
-    debug=True
+# Uses MONGODB_URI and MONGODB_DB env vars by default
+mongo = MongoService()
+
+col = mongo.collection("my_collection")
+col.insert_one({"key": "value"})
+
+mongo.close()
+```
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `MONGODB_URI` | `mongodb://localhost:27017` | MongoDB connection URI |
+| `MONGODB_DB` | — | Database name |
+
+#### Rulebook
+
+Store and retrieve LLM instruction rules.
+
+```python
+# Save a rulebook (string or dict or list)
+mongo.insert_rulebook("Always respond in formal English.", rulebook_id="default")
+mongo.insert_rulebook({"rulebook": "Be concise.", "version": 1}, rulebook_id="v2")
+
+# Fetch rulebook documents
+docs = mongo.get_rulebook(rulebook_id="default")
+
+# Get a ready-to-use prompt string
+prompt = mongo.rulebook_prompt(rulebook_id="default")
+# → "Incorporate the following rules into your reasoning:\nAlways respond in formal English."
+```
+
+#### Session History
+
+Save, retrieve, append, search, and delete conversation history per user.
+
+```python
+# Save a new session (creates session_id automatically)
+result = mongo.save_user_history(
+    user_id="user_123",
+    messages=[
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi! How can I help?"},
+    ],
+    title="First chat",
+    tags=["onboarding"],
 )
 
-logger.info("Custom logger initialized")
+# Append messages to an existing session
+mongo.append_user_history(
+    user_id="user_123",
+    session_id=result["session_id"],
+    messages={"role": "user", "content": "Follow-up question"},
+)
+
+# Fetch one session
+session = mongo.get_user_history_session(user_id="user_123", session_id="<session_id>")
+
+# Fetch all sessions for a user (newest first)
+sessions = mongo.fetch_user_history(user_id="user_123", limit=20, offset=0)
+
+# Search message content
+results = mongo.search_user_history(user_id="user_123", query="refund policy")
+
+# Delete a session
+mongo.delete_user_history(user_id="user_123", session_id="<session_id>")
 ```
-
-### Parameters
-
-| Parameter | Type            | Description                                                  |
-| --------- | --------------- | ------------------------------------------------------------ |
-| `log_dir` | `str` or `Path` | Directory where logs will be stored                          |
-| `debug`   | `bool`          | Enables DEBUG logging when `True`, INFO logging when `False` |
 
 ---
 
-## Log Directory Structure
+### `sqlService`
 
-Logs are automatically organized by month and date.
-
-```text
-logs/
-└── Jun_2026/
-    └── 08-06-2026.log
-```
-
-A new monthly folder is created automatically, and each day receives its own log file.
-
----
-
-## Default Configuration
-
-The package ships with the following defaults:
+Generic ODBC SQL service wrapper using `pyodbc`.
 
 ```python
-DEBUG = True
-LOG_DIR = Path.cwd() / "logs"
+from tm_utility.sqlService import SQLService
+
+# Via connection string
+sql = SQLService(connection_string="DSN=mydsn;UID=user;PWD=pass")
+
+# Or via individual params
+sql = SQLService(driver="ODBC Driver 17 for SQL Server", server="localhost", database="mydb", uid="user", pwd="pass")
+
+rows = sql.query("SELECT * FROM my_table WHERE id = ?", params=[1])
+sql.close()
 ```
 
-Meaning:
+**Environment variable:**
 
-* Logs are stored inside a `logs/` folder in the current working directory.
-* Debug logging is enabled by default.
+| Variable | Description |
+|---|---|
+| `ODBC_CONNECTION_STRING` | Full ODBC connection string |
+
+#### Rulebook
+
+```python
+# Save a rulebook
+sql.insert_rulebook("Always respond in formal English.", rulebook_id="default")
+sql.insert_rulebook({"rulebook": "Be concise."}, rulebook_id="v2")
+
+# Fetch rulebook rows
+docs = sql.get_rulebook(rulebook_id="default")
+
+# Get a ready-to-use prompt string
+prompt = sql.rulebook_prompt(rulebook_id="default")
+```
+
+#### Session History
+
+```python
+# Save a session
+sql.save_user_history(
+    user_id="user_123",
+    messages=[
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi!"},
+    ],
+    title="First chat",
+)
+
+# Append to an existing session
+sql.append_user_history(
+    user_id="user_123",
+    session_id="<session_id>",
+    messages={"role": "user", "content": "Another message"},
+)
+
+# Fetch one session
+session = sql.get_user_history_session(user_id="user_123", session_id="<session_id>")
+
+# Fetch all sessions for a user
+sessions = sql.fetch_user_history(user_id="user_123", limit=20, offset=0)
+
+# Search message content
+results = sql.search_user_history(user_id="user_123", query="refund policy")
+
+# Delete a session
+sql.delete_user_history(user_id="user_123", session_id="<session_id>")
+```
 
 ---
 
-## IST Timezone Support
+### `vectorstore`
 
-All timestamps are generated in **Indian Standard Time (IST)**:
+Ingest documents (PDF, DOCX) using ChromaDB embeddings.
+```python
+from tm_utility.vectorstore import ingest_document, retrieve
 
-```text
-UTC +05:30
+# Ingest a single file or a folder
+ingest_document(
+    file_path="./docs/manual.pdf",
+    metadata=False, #[Optional] default - True
+    embedding_mode="chunk",   # "chunk" | "page" | "file"
+    chroma_path="./chroma_db",
+    chunk_size=1000, #[Optional] default = 1000
+    chunk_overlap=200, #[Optional] default = 200
+)
+```
+Retrieve documents (PDF, DOCX) using ChromaDB embeddings.
+```python
+from tm_utility.vectorstore import retrieve
+
+# Retrieve relevant chunks
+results = retrieve(
+    query="What is the refund policy?",
+    chroma_path="./chroma_db", #[Optional] default = ./chroma_db
+    top_k=5, #[Optional] default = 5
+)
+
+for r in results:
+    print(r["score"], r["content"])
 ```
 
-This is useful for applications deployed primarily in India without requiring additional timezone configuration.
+**Supported file types:** `.pdf`, `.docx`
+
+**Embedding modes:**
+
+| Mode | Description |
+|---|---|
+| `chunk` | Splits document into overlapping text chunks |
+| `page` | One embedding per page |
+| `file` | Single embedding for the entire file |
 
 ---
 
+## Environment Variables Summary
+
+| Variable | Module | Description |
+|---|---|---|
+| `MONGODB_URI` | mongoService | MongoDB connection URI |
+| `MONGODB_DB` | mongoService | MongoDB database name |
+| `ODBC_CONNECTION_STRING` | sqlService | ODBC connection string |
+
+---
+## Authors
+Vidit Sood, Rahul Sharma, Anikait Kapoor — Tmotions Global Pvt. Ltd.
+
+---
 ## License
-
-MIT License
-
----
-
-## Author
-
-TM Utilities
-
-Built for simple, structured Python logging with minimal setup.
+MIT © 2026 Vidit Sood, Rahul Sharma, Anikait Kapoor — Tmotions Global Pvt. Ltd.
