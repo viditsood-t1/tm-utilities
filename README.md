@@ -234,8 +234,8 @@ for r in results:
 
 ---
 ## Authors
-Vidit Sood, Rahul Sharma, Anikait Kapoor — Tmotions Global Pvt. Ltd.
+Vidit Sood, Rahul Sharma, Anikait Kapoor
 
 ---
 ## License
-MIT © 2026 Vidit Sood, Rahul Sharma, Anikait Kapoor — Tmotions Global Pvt. Ltd.
+MIT © 2026 Vidit Sood, Rahul Sharma, Anikait Kapoor

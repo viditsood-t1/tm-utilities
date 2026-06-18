@@ -4,12 +4,12 @@ version = "0.1.0"
 description = "A Python utility library providing reusable service wrappers for MongoDB, SQL (ODBC), logging, and vector store operations."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
 authors = [
     {name = "Vidit Sood"},
     {name = "Rahul Sharma"},
     {name = "Anikait Kapoor"},
 ]
+
 dependencies = [
     "chromadb",
     "langchain==0.3.0",
@@ -18,9 +18,13 @@ dependencies = [
     "pymongo>=4.17.0",
     "sentence-transformers>=5.5.1",
     "torch>=2.0.0",
-    "pyodbc"
+    "pyodbc",
+    "docx2txt",
+    "pypdf"
 ]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
 where = ["src"]
