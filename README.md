@@ -237,5 +237,4 @@ for r in results:
 Vidit Sood, Rahul Sharma, Anikait Kapoor
 
 ---
-## License
-MIT © 2026 Vidit Sood, Rahul Sharma, Anikait Kapoor
+
