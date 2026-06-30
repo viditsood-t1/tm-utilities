@@ -1,6 +1,6 @@
 [project]
 name = "tm-utilities"
-version = "0.1.3"
+version = "0.1.5"
 description = "A Python utility library providing reusable service wrappers for MongoDB, SQL (ODBC), logging, and vector store operations."
 readme = "README.md"
 requires-python = ">=3.10"
